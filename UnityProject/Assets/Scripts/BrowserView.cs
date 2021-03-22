@@ -23,6 +23,11 @@ public class BrowserView : MonoBehaviour
     public TMP_Text ProgressText;
     public Transform GazePointer;
     public RawImage RawImage;
+
+    public TMPro.TextMeshPro LogText;
+    void Log(string msg) { LogText.text = msg + "\r\n" + LogText.text; }
+    private string lastKeyboardText;
+
     private UserAgent _currentUserAgent = UserAgent.mobile;
     private OVROverlay _overlay;
 
@@ -40,6 +45,8 @@ public class BrowserView : MonoBehaviour
     private static string classString = "com.eyeflite.ian.geckoviewplugin.GeckoViewPLugin";
     private BrowserHistoryType _currentBrowserHistoryType;
 
+    private TouchScreenKeyboard popupKeyboard;
+
     public enum BrowserHistoryType
     {
         Browser,
@@ -54,7 +61,7 @@ public class BrowserView : MonoBehaviour
     public static readonly Dictionary<BrowserHistoryType, string> DefaultUrls =
         new Dictionary<BrowserHistoryType, string>()
         {
-            {BrowserHistoryType.Browser, "https://www.google.com"},
+            {BrowserHistoryType.Browser, "about:blank" }, //"https://www.google.com"},
             {BrowserHistoryType.Youtube, "https://www." + YoutubeSubstring},
         };
 
@@ -67,17 +74,98 @@ public class BrowserView : MonoBehaviour
 
     // CHANGE PER YOUR INPUT MODULE SPECIFICS
     private void OnClick()
-    {   
-        AddTap(GazePointer.transform.position);       
+    {
+        AddTap(GazePointer.transform.position);
     }
 
     //TODO: show your keyboard here
     public void ChangeKeyboardVisiblity(bool show)
     {
-        
+        if (show)
+        {
+            if (popupKeyboard == null)
+            {
+                Log("Showing keyboard");
+                lastKeyboardText = "";
+                popupKeyboard = TouchScreenKeyboard.Open("", TouchScreenKeyboardType.Default, false, false, false, false);
+            }
+            else
+            {
+                if (!popupKeyboard.active)
+                {
+                    popupKeyboard.text = "";
+                    popupKeyboard.active = true;
+                    lastKeyboardText = popupKeyboard.text;
+                    Log("Already have keyboard, active");
+                }
+                else
+                {
+                    Log("Keyboard already active");
+                }
+            }
+        }
+        else
+        {
+            if (popupKeyboard != null)
+            {
+                Log("Hiding keyboard");
+                //popupKeyboard.active = false;
+                popupKeyboard = null;
+            }
+            else 
+            {
+                Log("Already hid keyboard");
+            }
+        }
     }
 
-    
+    private void Update()
+    {
+        if (popupKeyboard != null && popupKeyboard.active)
+        {
+            switch (popupKeyboard.status)
+            {
+                case TouchScreenKeyboard.Status.Done:
+                    Log("popupKeyboard done");
+                    ChangeKeyboardVisiblity(false);
+                    break;
+
+                case TouchScreenKeyboard.Status.Canceled:
+                    Log("popupKeyboard canceled");
+                    ChangeKeyboardVisiblity(false);
+                    break;
+
+                case TouchScreenKeyboard.Status.LostFocus:
+                    Log("popupKeyboard lost focus");
+                    ChangeKeyboardVisiblity(false);
+                    break;
+
+                case TouchScreenKeyboard.Status.Visible:
+                    if (lastKeyboardText != popupKeyboard.text)
+                    {
+                        string newText = popupKeyboard.text;
+                        if (newText.StartsWith(lastKeyboardText))
+                        {
+                            string appendme = newText.Substring(lastKeyboardText.Length);
+                            Log("AppendText " + appendme);
+                            AppendText(appendme);
+                        }
+                        else
+                        if (lastKeyboardText.StartsWith(newText))
+                        {
+                            for (int i = lastKeyboardText.Length; i > newText.Length; i--)
+                            {
+                                Log("Backspace");
+                                Backspace();
+                            }
+                        }
+                        lastKeyboardText = newText;
+                    }
+                    break;
+            }
+        }
+    }
+
     /// <summary>
     /// Calls the plugin to get png bytes from the surface.
     /// </summary>
@@ -100,13 +188,19 @@ public class BrowserView : MonoBehaviour
 
     public void InvokeLoadURL()
     {
-        if (UrlInputField.text == "")
-        {
-            LoadURL("google.com");
-        }
-
         string potentialUrl = UrlInputField.text;
 
+        if (potentialUrl == "")
+        {
+            potentialUrl = DefaultUrls[_currentBrowserHistoryType];
+            Log("blank URL --> " + potentialUrl);
+        }
+
+        if (potentialUrl.StartsWith("about:"))
+        {
+            LoadURL(potentialUrl);
+        }
+        else
         if (ValidHttpURL(potentialUrl, out var outUri))
         {
             LoadURL(outUri.AbsoluteUri);
@@ -358,7 +452,6 @@ public class BrowserView : MonoBehaviour
         RawImage.GetComponent<Button>().onClick.AddListener(OnClick);
         _overlay = GetComponent<OVROverlay>();
         _rawImageRect = RawImage.GetComponent<RectTransform>();
-
         InitializeAndroidPlugin();
     }
     
@@ -550,6 +643,7 @@ public class BrowserView : MonoBehaviour
         Debug.Log("on page visited: " + url );
         Debug.Log("last page visited: " + lastUrl );
         // NOTE: seems like this method is used too often for random sites of no importance
+        Log("OnPageVisited " + url);
         OnPageLoad?.Invoke(url);
     }
     
@@ -559,12 +653,13 @@ public class BrowserView : MonoBehaviour
     // used for autofill text, if the input field target changes
     public void RestartInput()
     {
-        
+        Log("RestartInput");
     }
 
     // reload the last url
     public void OnSessionCrash()
     {
+        Log("OnSessionCrash");
         Debug.Log("Attempting browser restart" );
         //CallAjc("RestartBrowser", new object[]{("trash", true)});   
     }
@@ -576,7 +671,7 @@ public class BrowserView : MonoBehaviour
     private bool ValidHttpURL(string s, out Uri resultURI)
     {        
         bool returnVal = false;
-        
+
         if (!Regex.IsMatch(s, @"^https?:\/\/", RegexOptions.IgnoreCase))
             s = "http://" + s;
         
